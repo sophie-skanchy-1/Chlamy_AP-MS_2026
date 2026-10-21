@@ -1,0 +1,176 @@
+---
+title: "proteomics volcano"
+output: html_notebook
+---
+
+```{r}
+# Install missing packages
+cran_packages <- c("remotes", "dplyr", "ggplot2")
+for (pkg_i in cran_packages) {
+  if (!require(pkg_i, quietly = T, character.only = T))
+    install.packages(pkg_i)
+}
+```
+
+# Coded by Sophie Skanchy, with help on syntax from ChatGPT and limma User's Guide
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(limma)
+```
+
+
+```{r}
+import_fname <- "protein_abundances_20260921_SK01_WuhrProteomics_2reps_rerunWithWT_vsWT.xlsx"
+```
+
+```{r}
+# Import raif1 proteomics data
+prot_data <- read_excel(
+  import_fname,
+  sheet = "R_input"
+)
+
+# Remove any entries with blanks
+prot_data <- prot_data[complete.cases(prot_data), ]
+
+# Remove entries with zeros
+prot_data[prot_data == 0] <- NA
+prot_data <- prot_data[complete.cases(prot_data), ]
+
+# Save the first column as feature names
+feature_names <- prot_data[[1]]
+
+# Remove the feature-name column
+prot_data <- prot_data[, -1]
+
+# Convert the remaining 4 sample columns to a numeric matrix
+prot_data <- as.matrix(prot_data)
+storage.mode(prot_data) <- "numeric"
+
+# Assign feature names as row names
+rownames(prot_data) <- feature_names
+```
+
+```{r}
+head(prot_data)
+```
+
+```{r}
+# Check that all blanks were removed
+colSums(is.na(prot_data))
+```
+
+```{r}
+# Treat zeros as missing, since log2(0) is undefined
+prot_data[prot_data == 0] <- NA
+
+# Log2 transform
+prot_data_log2 <- log2(prot_data)
+
+# Check values
+head(prot_data_log2)
+```
+```{r}
+# Check for errors in log2
+colSums(is.na(prot_data_log2))
+```
+
+```{r}
+# Set up for comparison to complemented strain
+data_log2_vComp = prot_data_log2[,c(1,2,3,4)]
+
+targets_vComp <- data.frame(
+  Sample = colnames(data_log2_vComp),
+  Condition = c(
+    "TAP raif1_RAIF1-V",
+    "TAP raif1_RAIF1-V",
+    "TAP raif1",
+    "TAP raif1"
+  )
+)
+
+targets_vComp
+```
+
+```{r}
+head(data_log2_vComp)
+```
+
+```{r}
+# design model for comparison to complemented strain
+design_vComp <- cbind(
+  "Control-Ref" = 1,
+  "TAP raif1-TAP raif1_RAIF1-V" = targets_vComp$Condition == "TAP raif1"
+)
+
+design_vComp
+```
+
+```{r}
+# Perform analysis for comparison to complemented strain
+fit_vComp <- lmFit(data_log2_vComp, design_vComp)
+fit_vComp <- eBayes(fit_vComp)
+
+t_test_vComp <- topTable(
+  fit_vComp,
+  coef = "TAP raif1-TAP raif1_RAIF1-V",
+  number = Inf,
+  adjust.method = "BH"
+)
+
+head(t_test_vComp[order(t_test_vComp$adj.P.Val), ])
+```
+
+```{r}
+# Volcano plot for comparison to complemented strain
+volcanoplot(
+  fit_vComp,
+  coef = 2,
+  highlight = 6,
+  names = rownames(data_log2_vComp),
+  main = "TAP raif1 vs TAP raif1_RAIF1-V"
+)
+
+# add cutoff lines for |log2FC| > 1 and adjusted p < 0.05
+abline(v = c(-1, 1), lty = 2)
+abline(h = -log10(0.05), lty = 2)
+```
+
+```{r}
+# Export topTable as .csv
+
+# Add CreID as feature names
+t_test_vComp$Feature <- substr(rownames(t_test_vComp), 1, 13)
+
+# Add volcano-plot Y values
+t_test_vComp$negLog10_P <- -log10(t_test_vComp$P.Value)
+t_test_vComp$negLog10_adjP <- -log10(t_test_vComp$adj.P.Val)
+
+# Reorder columns if desired
+t_test_vComp <- t_test_vComp[, c(
+  "Feature",
+  "logFC",
+  "P.Value",
+  "adj.P.Val",
+  "negLog10_P",
+  "negLog10_adjP",
+  "AveExpr",
+  "t",
+  "B"
+)]
+
+head(t_test_vComp)
+```
+
+```{r}
+# Export raif1 vs raif1_RAIF1-V stats
+write.csv(
+  t_test_vComp,
+  "TAP_raif11_vs_TAP_raif1_RAIF1-V_volcano_data_noBlankRerun_WT.csv",
+  row.names = TRUE
+)
+```
+
